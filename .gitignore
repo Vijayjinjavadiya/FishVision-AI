@@ -1,0 +1,16 @@
+# Dataset
+train/
+valid/
+test/
+
+# Extra models
+models/last.pt
+models/yolo26n.pt
+models/yolov8n.pt
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.env

@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 280" width="1200" height="280">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0f172a"/>
+      <stop offset="50%" style="stop-color:#1e3a5f"/>
+      <stop offset="100%" style="stop-color:#0f172a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#38bdf8"/>
+      <stop offset="100%" style="stop-color:#818cf8"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#38bdf8;stop-opacity:0.3"/>
+      <stop offset="100%" style="stop-color:#818cf8;stop-opacity:0.3"/>
+    </linearGradient>
+    <filter id="blur">
+      <feGaussianBlur stdDeviation="12"/>
+    </filter>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#38bdf8" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="280" fill="url(#bg)" rx="16"/>
+
+  <!-- Glow orbs -->
+  <circle cx="200" cy="140" r="120" fill="#38bdf8" opacity="0.06" filter="url(#blur)"/>
+  <circle cx="1000" cy="140" r="120" fill="#818cf8" opacity="0.06" filter="url(#blur)"/>
+  <circle cx="600" cy="60" r="80" fill="#6366f1" opacity="0.04" filter="url(#blur)"/>
+
+  <!-- Decorative grid lines -->
+  <line x1="0" y1="40" x2="1200" y2="40" stroke="#334155" stroke-width="1" opacity="0.4"/>
+  <line x1="0" y1="240" x2="1200" y2="240" stroke="#334155" stroke-width="1" opacity="0.4"/>
+
+  <!-- Top accent line -->
+  <rect x="0" y="0" width="1200" height="4" fill="url(#accent)" rx="2"/>
+
+  <!-- Floating fish emojis - left cluster -->
+  <text x="80" y="110" font-size="36" opacity="0.25" transform="rotate(-15, 80, 110)">🐠</text>
+  <text x="130" y="190" font-size="28" opacity="0.2" transform="rotate(10, 130, 190)">🐡</text>
+  <text x="50" y="200" font-size="22" opacity="0.15" transform="rotate(-5, 50, 200)">🦋</text>
+
+  <!-- Floating fish emojis - right cluster -->
+  <text x="1060" y="110" font-size="36" opacity="0.25" transform="rotate(15, 1060, 110)">🐟</text>
+  <text x="1110" y="190" font-size="28" opacity="0.2" transform="rotate(-10, 1110, 190)">🐠</text>
+  <text x="1020" y="200" font-size="22" opacity="0.15" transform="rotate(5, 1020, 200)">🦓</text>
+
+  <!-- Center content -->
+  <!-- Main title -->
+  <text x="600" y="120" 
+        font-family="'Segoe UI', system-ui, sans-serif" 
+        font-size="52" 
+        font-weight="800"
+        text-anchor="middle" 
+        fill="url(#accent)"
+        filter="url(#shadow)">Fish Detection System</text>
+
+  <!-- Subtitle -->
+  <text x="600" y="162" 
+        font-family="'Segoe UI', system-ui, sans-serif" 
+        font-size="20"
+        font-weight="400"
+        text-anchor="middle" 
+        fill="#94a3b8">Real-time species identification · YOLOv8n · 13 classes · 94% mAP50</text>
+
+  <!-- Stat pills -->
+  <!-- Pill 1 -->
+  <rect x="310" y="185" width="160" height="38" rx="19" fill="#1e293b" stroke="#38bdf8" stroke-width="1.5" opacity="0.9"/>
+  <text x="390" y="209" font-family="'Segoe UI', system-ui, sans-serif" font-size="13" font-weight="600" text-anchor="middle" fill="#38bdf8">🎯 mAP50: 94%</text>
+
+  <!-- Pill 2 -->
+  <rect x="490" y="185" width="160" height="38" rx="19" fill="#1e293b" stroke="#818cf8" stroke-width="1.5" opacity="0.9"/>
+  <text x="570" y="209" font-family="'Segoe UI', system-ui, sans-serif" font-size="13" font-weight="600" text-anchor="middle" fill="#818cf8">🐟 13 Species</text>
+
+  <!-- Pill 3 -->
+  <rect x="670" y="185" width="200" height="38" rx="19" fill="#1e293b" stroke="#6ee7b7" stroke-width="1.5" opacity="0.9"/>
+  <text x="770" y="209" font-family="'Segoe UI', system-ui, sans-serif" font-size="13" font-weight="600" text-anchor="middle" fill="#6ee7b7">📸 8,242 Images</text>
+
+  <!-- Bottom tagline -->
+  <text x="600" y="256" 
+        font-family="'Segoe UI', system-ui, sans-serif" 
+        font-size="13"
+        text-anchor="middle" 
+        fill="#475569">Built with Ultralytics · Streamlit · Python</text>
+
+  <!-- Bottom accent line -->
+  <rect x="0" y="276" width="1200" height="4" fill="url(#accent)" rx="2"/>
+</svg>
