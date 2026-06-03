@@ -45,6 +45,26 @@ MATURITY_LENGTH_CM = {
     "YellowCichlid": 10, "YellowTang": 15,
 }
 
+# Maximum biologically plausible length (cm) per species.
+# Values include a generous 2× margin above real-world max to
+# accommodate depth-measurement noise — anything beyond this is
+# definitely NOT a fish (e.g. a 154 cm "ClownFish" = person).
+MAX_LENGTH_CM = {
+    "GoldFish":               60,    # real max ~30 cm (Comet type)
+    "ClownFish":              25,    # real max ~12 cm
+    "ZebraFish":              12,    # real max ~5 cm
+    "AngelFish":              60,    # real max ~30 cm (freshwater)
+    "BlueTang":               60,    # real max ~31 cm
+    "ButterflyFish":          50,    # real max ~25 cm
+    "Gourami":                50,    # real max ~25 cm (Giant: up to 70 cm)
+    "MorishIdol":             50,    # real max ~23 cm
+    "PlatyFish":              15,    # real max ~7 cm
+    "RibbonedSweetlips":      80,    # real max ~40 cm
+    "ThreeStripedDamselfish": 20,    # real max ~10 cm
+    "YellowCichlid":          40,    # real max ~20 cm
+    "YellowTang":             50,    # real max ~20 cm
+}
+
 def predict_weight(species, length_cm):
     """Returns predicted weight in grams using W = a * L^b"""
     coeffs = WEIGHT_COEFFICIENTS.get(species)

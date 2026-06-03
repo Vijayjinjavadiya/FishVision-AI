@@ -4,6 +4,12 @@
 #   python -m src.oak_runner
 #
 # Press Q or Esc to quit.  Detections are auto-saved to logs/oak_detections.csv
+# Captured frames are saved to logs/captures/
+#
+# False-positive prevention (3-layer defence):
+#   1. Veto Gate     — COCO model blocks person / object overlaps
+#   2. Size Filter   — species-specific max length rejects impossible sizes
+#   3. Bbox Filter   — min area, max aspect ratio, max frame coverage
 
 import csv
 import sys
@@ -18,7 +24,7 @@ import numpy as np
 if __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.biometrics import classify_maturity, predict_weight
+from src.biometrics import MAX_LENGTH_CM, classify_maturity, predict_weight
 from src.oak_detector import (
     IMAGE_WIDTH_PX,
     build_pipeline,
@@ -26,17 +32,30 @@ from src.oak_detector import (
     model,
     pixel_to_real_mm,
 )
+from src.tracker import FishTracker
+from src.veto_gate import VetoGate
 
 # ── constants ──────────────────────────────────────────────────────────────────
-MIN_CONF     = 0.50
-MIN_DEPTH_MM = 100       # < 10 cm → skip (sensor noise)
-MAX_DEPTH_MM = 5_000     # > 5 m  → skip (unreliable range)
-LOG_DIR      = Path(__file__).resolve().parent.parent / "logs"
-LOG_FILE     = LOG_DIR / "oak_detections.csv"
-CSV_HEADER   = ["timestamp", "species", "confidence",
-                "length_cm", "width_cm", "depth_mm",
-                "weight_g", "maturity",
-                "x1", "y1", "x2", "y2"]
+MIN_CONF          = 0.60          # confidence threshold
+MIN_DEPTH_MM      = 100           # < 10 cm → skip (sensor noise)
+MAX_DEPTH_MM      = 5_000         # > 5 m  → skip (unreliable range)
+MAX_FRAME_COVER   = 0.40          # bbox covering >40% of frame → reject
+LOG_DIR           = Path(__file__).resolve().parent.parent / "logs"
+LOG_FILE          = LOG_DIR / "oak_detections.csv"
+CAPTURES_DIR      = LOG_DIR / "captures"
+CSV_HEADER        = ["timestamp", "track_id", "species", "confidence",
+                     "length_cm", "width_cm", "depth_mm",
+                     "weight_g", "maturity",
+                     "x1", "y1", "x2", "y2", "frame_file"]
+
+# ── tracker tuning ─────────────────────────────────────────────────────────────
+TRACKER_KWARGS = dict(
+    iou_threshold=0.25,
+    max_distance_px=120,
+    max_age_s=3.0,
+    min_bbox_area_px=1500,
+    max_aspect_ratio=5.0,
+)
 
 # ── colour palette per class (BGR) ────────────────────────────────────────────
 _PALETTE = [
@@ -67,7 +86,7 @@ def get_depth_at_box(depth_frame: np.ndarray,
 
 
 # ── annotation ────────────────────────────────────────────────────────────────
-def _draw_detection(frame, x1, y1, x2, y2, colour, lines):
+def _draw_detection(frame, x1, y1, x2, y2, colour, lines, track_id=None):
     font       = cv2.FONT_HERSHEY_SIMPLEX
     font_scale = 0.52
     thickness  = 2
@@ -82,6 +101,16 @@ def _draw_detection(frame, x1, y1, x2, y2, colour, lines):
                       (px + sq // 2, py + sq // 2),
                       colour, -1)
 
+    # Show track ID in bottom-right corner of bbox
+    if track_id is not None:
+        id_text = f"#{track_id}"
+        (tw, th), _ = cv2.getTextSize(id_text, font, 0.45, 1)
+        cv2.rectangle(frame,
+                      (x2 - tw - 6, y2 - th - 6),
+                      (x2, y2), colour, -1)
+        cv2.putText(frame, id_text, (x2 - tw - 3, y2 - 4),
+                    font, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+
     for i, line in enumerate(lines):
         y_pos = y1 - 10 - (len(lines) - 1 - i) * line_h
         if y_pos < 15:
@@ -95,16 +124,46 @@ def _draw_detection(frame, x1, y1, x2, y2, colour, lines):
                     font, font_scale, colour, thickness, cv2.LINE_AA)
 
 
-def _draw_hud(frame, fps: float, n_fish: int):
+def _draw_veto_overlay(frame, veto_boxes):
+    """Draw translucent red overlay on vetoed regions (persons, objects)."""
+    for (x1, y1, x2, y2, cls_name) in veto_boxes:
+        # Semi-transparent red rectangle
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 180), -1)
+        cv2.addWeighted(overlay, 0.15, frame, 0.85, 0, frame)
+        # Red border
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 200), 1)
+        # Label
+        cv2.putText(frame, f"BLOCKED: {cls_name}",
+                    (x1 + 4, y1 + 16),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 220), 1)
+
+
+def _draw_hud(frame, fps: float, n_fish_now: int, total_unique: int,
+              n_vetoed: int):
     h, w = frame.shape[:2]
-    cv2.rectangle(frame, (0, 0), (260, 60), (0, 0, 0), -1)
+    cv2.rectangle(frame, (0, 0), (400, 60), (0, 0, 0), -1)
     cv2.putText(frame, "FishVision-AI  OAK-D Pro",
                 (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 120), 2)
-    cv2.putText(frame, f"FPS: {fps:5.1f}   Fish: {n_fish}",
-                (8, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+    info = f"FPS:{fps:4.1f}  Now:{n_fish_now}  Total:{total_unique}"
+    if n_vetoed:
+        info += f"  Blocked:{n_vetoed}"
+    cv2.putText(frame, info,
+                (8, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
     cv2.putText(frame, "Press Q to quit",
                 (w - 160, h - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
                 (120, 120, 120), 1)
+
+
+# ── frame capture ─────────────────────────────────────────────────────────────
+def _save_frame(frame: np.ndarray, track_id: int, species: str, ts: str) -> str:
+    """Save a frame capture for a newly detected fish. Returns the filename."""
+    CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
+    safe_ts = ts.replace(":", "-").replace("T", "_")
+    filename = f"fish_{track_id:04d}_{species}_{safe_ts}.jpg"
+    filepath = CAPTURES_DIR / filename
+    cv2.imwrite(str(filepath), frame)
+    return filename
 
 
 # ── CSV logger ────────────────────────────────────────────────────────────────
@@ -121,15 +180,25 @@ def _open_csv():
 # ── main ──────────────────────────────────────────────────────────────────────
 def run():
     LOG_DIR.mkdir(parents=True, exist_ok=True)
+    CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
     csv_fh, csv_writer = _open_csv()
+
+    # Initialise tracker + veto gate
+    tracker = FishTracker(**TRACKER_KWARGS)
+    veto = VetoGate()
 
     print("=" * 60)
     print("  FishVision-AI  —  OAK-D Pro Live Detection")
     print("=" * 60)
-    print(f"  Classes      : {len(model.names)}")
-    print(f"  Min conf     : {MIN_CONF:.0%}")
-    print(f"  Depth range  : {MIN_DEPTH_MM}–{MAX_DEPTH_MM} mm")
-    print(f"  CSV log      : {LOG_FILE}")
+    print(f"  Classes        : {len(model.names)}")
+    print(f"  Min conf       : {MIN_CONF:.0%}")
+    print(f"  Max frame cover: {MAX_FRAME_COVER:.0%}")
+    print(f"  Depth range    : {MIN_DEPTH_MM}–{MAX_DEPTH_MM} mm")
+    print(f"  CSV log        : {LOG_FILE}")
+    print(f"  Captures       : {CAPTURES_DIR}")
+    print(f"  Tracker        : IoU≥{TRACKER_KWARGS['iou_threshold']}, "
+          f"min_area={TRACKER_KWARGS['min_bbox_area_px']}px², "
+          f"max_aspect={TRACKER_KWARGS['max_aspect_ratio']}")
     print("  Press Q or Esc to stop.")
     print("=" * 60)
 
@@ -175,10 +244,18 @@ def run():
                     depth_frame, (fw, fh), interpolation=cv2.INTER_NEAREST
                 )
 
-            # ── YOLO inference ────────────────────────────────────────────────
+            frame_area = fh * fw
+
+            # ── LAYER 1: Veto Gate — detect persons & objects ─────────────────
+            veto_boxes = veto.detect_veto_objects(frame)
+
+            # ── YOLO fish inference ───────────────────────────────────────────
             results = model(frame, imgsz=640, verbose=False)[0]
-            n_fish  = 0
             ts      = datetime.now().isoformat(timespec="seconds")
+
+            # ── Build detection list (with 3-layer filtering) ─────────────────
+            raw_detections: list[dict] = []
+            n_vetoed = 0
 
             for box in results.boxes:
                 conf = float(box.conf[0])
@@ -188,43 +265,107 @@ def run():
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 cls_idx = int(box.cls[0])
                 species = model.names[cls_idx]
-                colour  = _box_colour(cls_idx)
+
+                # ── LAYER 3a: Bbox shape sanity ───────────────────────────────
+                if not tracker.is_valid_detection(x1, y1, x2, y2):
+                    continue
+
+                # ── LAYER 3b: Frame coverage — reject if >40% of frame ───────
+                box_area = (x2 - x1) * (y2 - y1)
+                if box_area / frame_area > MAX_FRAME_COVER:
+                    n_vetoed += 1
+                    continue
+
+                # ── LAYER 1: Veto Gate — check overlap with person/objects ────
+                veto_reason = veto.is_vetoed((x1, y1, x2, y2), veto_boxes)
+                if veto_reason:
+                    n_vetoed += 1
+                    continue
 
                 # ── depth ─────────────────────────────────────────────────────
                 Z = get_depth_at_box(depth_frame, x1, y1, x2, y2)
                 length_cm = width_cm = weight_g = None
                 maturity  = "—"
-                depth_label = "no depth"
 
                 if Z is not None:
                     length_mm = pixel_to_real_mm(x2 - x1, Z, image_width_px=fw)
                     width_mm  = pixel_to_real_mm(y2 - y1, Z, image_width_px=fw)
                     length_cm = round(length_mm / 10, 1)
                     width_cm  = round(width_mm  / 10, 1)
+
+                    # ── LAYER 2: Size filter — reject impossible sizes ────────
+                    max_len = MAX_LENGTH_CM.get(species, 80)
+                    if length_cm > max_len:
+                        n_vetoed += 1
+                        continue
+
                     weight_g  = predict_weight(species, length_cm)
                     maturity  = classify_maturity(species, length_cm)
-                    depth_label = f"D:{Z/10:.0f}cm"
+
+                raw_detections.append({
+                    "species": species,
+                    "conf": conf,
+                    "cls_idx": cls_idx,
+                    "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                    "length_cm": length_cm,
+                    "width_cm": width_cm,
+                    "depth_mm": Z,
+                    "weight_g": weight_g,
+                    "maturity": maturity,
+                })
+
+            # ── Update tracker ────────────────────────────────────────────────
+            tracked = tracker.update(raw_detections)
+            n_fish_now = len(tracked)
+
+            # Draw veto overlay (translucent red) on blocked regions
+            if veto_boxes:
+                _draw_veto_overlay(frame, veto_boxes)
+
+            for trk, is_new in tracked:
+                x1, y1, x2, y2 = trk.bbox
+                det = next(
+                    (d for d in raw_detections
+                     if d["x1"] == x1 and d["y1"] == y1),
+                    None,
+                )
+                cls_idx = det["cls_idx"] if det else 0
+                colour  = _box_colour(cls_idx)
+
+                length_cm = trk.length_cm
+                width_cm  = trk.width_cm
+                Z         = trk.depth_mm
+                weight_g  = trk.weight_g
+                maturity  = trk.maturity
+
+                depth_label = f"D:{Z/10:.0f}cm" if Z else "no depth"
 
                 # ── annotation ────────────────────────────────────────────────
                 if length_cm is not None:
                     lines = [
-                        f"{species}  {conf:.0%}",
+                        f"{trk.species}  {trk.best_conf:.0%}",
                         f"L:{length_cm}cm  W:{width_cm}cm  {depth_label}",
                         f"{weight_g}g  {maturity}" if weight_g else maturity,
                     ]
                 else:
-                    lines = [f"{species}  {conf:.0%}", depth_label]
+                    lines = [f"{trk.species}  {trk.best_conf:.0%}", depth_label]
 
-                _draw_detection(frame, x1, y1, x2, y2, colour, lines)
-                n_fish += 1
+                _draw_detection(frame, x1, y1, x2, y2, colour, lines,
+                                track_id=trk.track_id)
 
-                # ── log ───────────────────────────────────────────────────────
-                csv_writer.writerow([
-                    ts, species, f"{conf:.3f}",
-                    length_cm, width_cm, Z,
-                    weight_g, maturity,
-                    x1, y1, x2, y2,
-                ])
+                # ── Log + save frame ONLY for NEW fish ────────────────────────
+                if is_new:
+                    frame_file = _save_frame(frame, trk.track_id, trk.species, ts)
+                    csv_writer.writerow([
+                        ts, trk.track_id, trk.species, f"{trk.best_conf:.3f}",
+                        length_cm, width_cm, Z,
+                        weight_g, maturity,
+                        x1, y1, x2, y2,
+                        frame_file,
+                    ])
+                    print(f"  [NEW] #{trk.track_id}  {trk.species}  "
+                          f"conf={trk.best_conf:.0%}  "
+                          f"L={length_cm}cm  → {frame_file}")
 
             csv_fh.flush()
 
@@ -236,7 +377,7 @@ def run():
                 frame_count = 0
                 fps_timer   = time.perf_counter()
 
-            _draw_hud(frame, fps, n_fish)
+            _draw_hud(frame, fps, n_fish_now, tracker.total_unique, n_vetoed)
             cv2.imshow("FishVision-AI  |  OAK-D Pro", frame)
 
             key = cv2.waitKey(1) & 0xFF
@@ -249,7 +390,9 @@ def run():
         csv_fh.close()
         cv2.destroyAllWindows()
         device.close()
-        print(f"\n[INFO] Detections saved to {LOG_FILE}")
+        print(f"\n[INFO] Unique fish detected : {tracker.total_unique}")
+        print(f"[INFO] Detections saved to  : {LOG_FILE}")
+        print(f"[INFO] Frames captured in   : {CAPTURES_DIR}")
         print("[INFO] Done.")
 
 

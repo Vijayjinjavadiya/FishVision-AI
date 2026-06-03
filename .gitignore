@@ -2,6 +2,8 @@
 train/
 valid/
 test/
+# logs 
+logs/
 
 # Extra models
 models/last.pt
