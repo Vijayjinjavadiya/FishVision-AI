@@ -1,5 +1,5 @@
 <div align="center">
-<img src="assets/6eb57068-116b-11ee-a55a-9335f156a1e7.gif" alt="Fish Detection System" width="100%">
+<img src="assets/6eb57068-116b-11ee-a55a-9335f156a1e7 (2).gif" alt="Fish Detection System" width="100%">
 
 <br/>
 
